@@ -1,0 +1,6 @@
+# Never commit a real config - it contains the API key in cleartext.
+opencode.json
+opencode.jsonc
+*.bak-*
+*.bak
+.env
