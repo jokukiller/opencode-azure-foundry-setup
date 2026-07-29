@@ -2,7 +2,7 @@
 
 Configures [OpenCode](https://opencode.ai) to use Claude and GPT models hosted on
 an Azure AI Foundry resource.
-
+(i made this for my own personal and my friend's use, if someone else happens to stumble upon this repo, know that the readme below is entirely ai written anyway , its better if you just point your own ai agent at this repo and tell him to set things up for you rather than using this script)
 ## Use
 
 1. Install OpenCode (**1.18.5 or newer** — see [Versions](#versions)).
