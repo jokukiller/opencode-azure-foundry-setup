@@ -40,10 +40,11 @@ auto-load-balance.
 folder, wherever you cloned this, anywhere. It uses no relative paths and does
 not care about the working directory.
 
-It writes one file:
+It writes two files:
 
 ```
 %USERPROFILE%\.config\opencode\opencode.json
+%USERPROFILE%\.config\opencode\ext\openai-deployment-map.ts
 ```
 
 That is OpenCode's **global** config, so every project on the machine gets the
@@ -80,8 +81,8 @@ resource, key, or `openai-2` provider.
 - Merges rather than replaces — your other settings, agents, MCP servers, and
   unrelated OpenAI model entries survive. An existing `model` choice is left
   alone.
-- Uses `@ai-sdk/openai` so GPT requests use the Responses API and the correct
-  token parameter.
+- Keeps OpenCode's native `openai` provider and canonical model IDs, preserving
+  registry-provided limits, capabilities, reasoning variants, and future updates.
 - Safe to re-run.
 
 Note: if your config is `.jsonc`, comments are lost on rewrite. The backup keeps
@@ -111,14 +112,16 @@ provider makes OpenCode inherit Anthropic's default background model
 here, so every title request 404s — silently, with no error surfaced anywhere.
 The symptom is just sessions that never get titles. The script sets this for you.
 
-The Azure deployment IDs include the `-1` suffix and are registered explicitly:
+OpenCode continues to expose the canonical native models:
 
-- `openai/gpt-5.6-sol-1`
-- `openai/gpt-5.6-terra-1`
-- `openai/gpt-5.6-luna-1`
+- `openai/gpt-5.6-sol`
+- `openai/gpt-5.6-terra`
+- `openai/gpt-5.6-luna`
 
-The suffix is part of the deployment name and does not cause a problem. The
-script adds model metadata so OpenCode can select these deployment-specific IDs.
+Azure's deployment names have a `-1` suffix. The installed transport plugin
+changes only the outgoing `model` field to the matching suffixed deployment.
+The picker and metadata stay native, including `max` reasoning and Fast/Pro
+modes added by OpenCode updates.
 
 ## Gotchas
 
@@ -156,12 +159,12 @@ Rough registry pricing per million tokens (input/output):
 
 | Model | Cost |
 | --- | --- |
-| `claude-opus-5`, `gpt-5.6-sol-1` | $5 / $25–30 |
-| `gpt-5.6-terra-1` | $2.50 / $15 |
-| `gpt-5.6-luna-1` | $1 / $6 |
+| `claude-opus-5`, `gpt-5.6-sol` | $5 / $25–30 |
+| `gpt-5.6-terra` | $2.50 / $15 |
+| `gpt-5.6-luna` | $1 / $6 |
 
 Context windows are ~1M tokens, so a runaway agent loop gets expensive quickly.
-`gpt-5.6-luna-1` is the cheap default for background work, which is why the
+`gpt-5.6-luna` is the cheap default for background work, which is why the
 script picks it for `small_model`.
 
 ## Security

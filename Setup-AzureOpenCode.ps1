@@ -48,10 +48,14 @@ $ErrorActionPreference = "Stop"
 # Candidate deployments. Anything not deployed is skipped, so extra entries are
 # harmless - add new model ids here as they are deployed.
 $AnthropicModels = @("claude-opus-5", "claude-opus-4-8")
-$OpenAiModels    = @("gpt-5.6-sol-1", "gpt-5.6-luna-1", "gpt-5.6-terra-1")
+$OpenAiModels = [ordered]@{
+    "gpt-5.6-sol"   = "gpt-5.6-sol-1"
+    "gpt-5.6-luna"  = "gpt-5.6-luna-1"
+    "gpt-5.6-terra" = "gpt-5.6-terra-1"
+}
 
 # Preferred background model, best first. Titles and summaries use this.
-$SmallModelPreference = @("openai/gpt-5.6-luna-1", "openai/gpt-5.6-sol-1", "openai/gpt-5.6-terra-1", "anthropic/claude-opus-4-8")
+$SmallModelPreference = @("openai/gpt-5.6-luna", "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "anthropic/claude-opus-4-8")
 
 function Write-Step { param($m) Write-Host "`n=== $m ===" -ForegroundColor Cyan }
 function Write-Ok   { param($m) Write-Host "  [ok]   $m" -ForegroundColor Green }
@@ -139,11 +143,12 @@ foreach ($m in $AnthropicModels) {
     elseif ($r.status -eq 401 -or $r.status -eq 403) { Write-Bad "anthropic/$m - auth rejected ($($r.status))"; $authFailed = $true }
     else { Write-Warn "anthropic/$m - not deployed ($($r.status))" }
 }
-foreach ($m in $OpenAiModels) {
-    $r = Test-OpenAiModel -Model $m
-    if ($r.ok) { $deployed.openai += $m; Write-Ok "openai/$m" }
+foreach ($m in $OpenAiModels.Keys) {
+    $deployment = $OpenAiModels[$m]
+    $r = Test-OpenAiModel -Model $deployment
+    if ($r.ok) { $deployed.openai += $m; Write-Ok "openai/$m -> $deployment" }
     elseif ($r.status -eq 401 -or $r.status -eq 403) { Write-Bad "openai/$m - auth rejected ($($r.status))"; $authFailed = $true }
-    else { Write-Warn "openai/$m - not deployed ($($r.status))" }
+    else { Write-Warn "openai/$m - deployment $deployment unavailable ($($r.status))" }
 }
 
 if ($deployed.openai.Count -eq 0) {
@@ -217,31 +222,36 @@ if ($deployed.openai.Count -gt 0) {
         $cfg.provider | Add-Member -NotePropertyName openai -NotePropertyValue ([PSCustomObject]@{})
     }
     $openai = $cfg.provider.openai
-    $openai | Add-Member -NotePropertyName npm -NotePropertyValue "@ai-sdk/openai" -Force
     if (-not $openai.PSObject.Properties['options']) {
         $openai | Add-Member -NotePropertyName options -NotePropertyValue ([PSCustomObject]@{})
     }
     $openai.options | Add-Member -NotePropertyName apiKey -NotePropertyValue $ApiKey -Force
     $openai.options | Add-Member -NotePropertyName baseURL -NotePropertyValue "$Endpoint/openai/v1" -Force
-    if (-not $openai.PSObject.Properties['models']) {
-        $openai | Add-Member -NotePropertyName models -NotePropertyValue ([PSCustomObject]@{})
-    }
-    foreach ($m in $deployed.openai) {
-        $displayName = switch ($m) {
-            "gpt-5.6-sol-1" { "GPT-5.6 Sol" }
-            "gpt-5.6-terra-1" { "GPT-5.6 Terra" }
-            "gpt-5.6-luna-1" { "GPT-5.6 Luna" }
-            default { $m }
+    # Remove entries created by versions of this script that exposed deployment
+    # names as custom models. Canonical native models keep models.dev metadata.
+    if ($openai.PSObject.Properties['models']) {
+        foreach ($deployment in $OpenAiModels.Values) {
+            $openai.models.PSObject.Properties.Remove($deployment)
         }
-        $openai.models | Add-Member -NotePropertyName $m -NotePropertyValue ([PSCustomObject]@{
-            name = $displayName
-            reasoning = $true
-            tool_call = $true
-            limit = [PSCustomObject]@{ context = 1050000; output = 128000 }
-        }) -Force
+        if ($openai.models.PSObject.Properties.Count -eq 0) {
+            $openai.PSObject.Properties.Remove('models')
+        }
     }
     Write-Ok "provider.openai -> $Endpoint/openai/v1"
 }
+
+# Keep canonical OpenAI model ids in the picker while translating them to Azure
+# deployment names only on the wire. This preserves native metadata and variants.
+$extDir = Join-Path $cfgDir "ext"
+if (-not (Test-Path $extDir)) { New-Item -ItemType Directory -Path $extDir -Force | Out-Null }
+$mapSource = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "openai-deployment-map.ts"
+$mapTarget = Join-Path $extDir "openai-deployment-map.ts"
+Copy-Item $mapSource $mapTarget -Force
+$mapUri = ([Uri]$mapTarget).AbsoluteUri
+$plugins = if ($cfg.PSObject.Properties['plugin']) { @($cfg.plugin) } else { @() }
+if ($plugins -notcontains $mapUri) { $plugins += $mapUri }
+$cfg | Add-Member -NotePropertyName plugin -NotePropertyValue $plugins -Force
+Write-Ok "Installed native OpenAI deployment mapper"
 
 # small_model MUST be set. Overriding the built-in anthropic provider makes
 # OpenCode inherit Anthropic's default small model (claude-haiku-4-5), which is
