@@ -1,8 +1,12 @@
 # OpenCode ↔ Azure AI Foundry setup
 
-Configures [OpenCode](https://opencode.ai) to use Claude and GPT models hosted on
-an Azure AI Foundry resource.
-(i made this for my own personal and my friend's use, if someone else happens to stumble upon this repo, know that the readme below is entirely ai written anyway , its better if you just point your own ai agent at this repo and tell him to set things up for you rather than using this script)
+Configures [OpenCode](https://opencode.ai) to use GPT models, plus any available
+Claude models, hosted on a single primary Azure AI Foundry resource.
+
+This script configures only that primary resource (`openai`, plus `anthropic`
+when a supported Claude deployment is available). Missing Claude deployments do
+not block GPT setup. It does not install a second-region provider or
+auto-load-balance.
 ## Use
 
 1. Install OpenCode (**1.18.5 or newer** — see [Versions](#versions)).
@@ -15,7 +19,8 @@ an Azure AI Foundry resource.
    ```
 
    It prompts for the key, or pass it with `-ApiKey`. Point at a different
-   resource with `-Endpoint https://<name>.services.ai.azure.com`.
+   resource with `-Endpoint https://<name>.services.ai.azure.com`. The default
+   endpoint is already set for the shared resource.
 
    **Run it from anywhere.** It does not matter which directory you are in and
    it is not per-project — see [Scope](#scope).
@@ -65,10 +70,18 @@ key is not scoped to one repo.
 Validates the key, discovers which models are actually deployed, then writes
 `~/.config/opencode/opencode.json`.
 
+Its scope is one primary resource. It does not install or manage a second
+resource, key, or `openai-2` provider.
+
 - Backs up any existing config first (`.bak-<timestamp>`).
 - Writes **nothing** if the key is rejected or no deployment responds.
-- Merges rather than replaces — your other settings, agents and MCP servers
-  survive. An existing `model` choice is left alone.
+- Missing Claude deployments are warnings only; available GPT deployments are
+  still configured.
+- Merges rather than replaces — your other settings, agents, MCP servers, and
+  unrelated OpenAI model entries survive. An existing `model` choice is left
+  alone.
+- Uses `@ai-sdk/openai` so GPT requests use the Responses API and the correct
+  token parameter.
 - Safe to re-run.
 
 Note: if your config is `.jsonc`, comments are lost on rewrite. The backup keeps
@@ -98,9 +111,14 @@ provider makes OpenCode inherit Anthropic's default background model
 here, so every title request 404s — silently, with no error surfaced anywhere.
 The symptom is just sessions that never get titles. The script sets this for you.
 
-**Model ids are real models.dev ids**, so OpenCode inherits true context limits
-(1M+) and reasoning effort levels automatically. No hand-written model
-definitions needed.
+The Azure deployment IDs include the `-1` suffix and are registered explicitly:
+
+- `openai/gpt-5.6-sol-1`
+- `openai/gpt-5.6-terra-1`
+- `openai/gpt-5.6-luna-1`
+
+The suffix is part of the deployment name and does not cause a problem. The
+script adds model metadata so OpenCode can select these deployment-specific IDs.
 
 ## Gotchas
 
@@ -138,13 +156,13 @@ Rough registry pricing per million tokens (input/output):
 
 | Model | Cost |
 | --- | --- |
-| `claude-opus-5`, `gpt-5.6-sol` | $5 / $25–30 |
-| `gpt-5.6-terra` | $2.50 / $15 |
-| `gpt-5.6-luna` | $1 / $6 |
+| `claude-opus-5`, `gpt-5.6-sol-1` | $5 / $25–30 |
+| `gpt-5.6-terra-1` | $2.50 / $15 |
+| `gpt-5.6-luna-1` | $1 / $6 |
 
 Context windows are ~1M tokens, so a runaway agent loop gets expensive quickly.
-`gpt-5.6-luna` is the cheap default for background work, which is why the script
-picks it for `small_model`.
+`gpt-5.6-luna-1` is the cheap default for background work, which is why the
+script picks it for `small_model`.
 
 ## Security
 

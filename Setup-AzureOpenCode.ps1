@@ -38,7 +38,7 @@
 [CmdletBinding()]
 param(
     [string] $ApiKey,
-    [string] $Endpoint = "https://aimodels1234.services.ai.azure.com",
+    [string] $Endpoint = "https://crosssans0786-3936-resource.services.ai.azure.com",
     [switch] $Force
 )
 
@@ -48,10 +48,10 @@ $ErrorActionPreference = "Stop"
 # Candidate deployments. Anything not deployed is skipped, so extra entries are
 # harmless - add new model ids here as they are deployed.
 $AnthropicModels = @("claude-opus-5", "claude-opus-4-8")
-$OpenAiModels    = @("gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra")
+$OpenAiModels    = @("gpt-5.6-sol-1", "gpt-5.6-luna-1", "gpt-5.6-terra-1")
 
 # Preferred background model, best first. Titles and summaries use this.
-$SmallModelPreference = @("openai/gpt-5.6-luna", "openai/gpt-5.6-sol", "anthropic/claude-opus-4-8")
+$SmallModelPreference = @("openai/gpt-5.6-luna-1", "openai/gpt-5.6-sol-1", "openai/gpt-5.6-terra-1", "anthropic/claude-opus-4-8")
 
 function Write-Step { param($m) Write-Host "`n=== $m ===" -ForegroundColor Cyan }
 function Write-Ok   { param($m) Write-Host "  [ok]   $m" -ForegroundColor Green }
@@ -115,11 +115,12 @@ function Test-AnthropicModel {
 
 function Test-OpenAiModel {
     param($Model)
-    # NOTE: max_completion_tokens, NOT max_tokens. Azure's own sample curl still
-    # shows max_tokens, which these models reject outright.
-    $body = @{ model = $Model; max_completion_tokens = 16; messages = @(@{ role = "user"; content = "hi" }) } | ConvertTo-Json -Depth 6
+    # Test the same API that OpenCode's native `openai` provider uses for GPT-5
+    # models. A successful Chat Completions request alone does not prove that
+    # reasoning, cache, and tool workflows through the Responses API will work.
+    $body = @{ model = $Model; max_output_tokens = 16; input = "hi" } | ConvertTo-Json -Depth 6
     try {
-        Invoke-RestMethod -Method Post -Uri "$Endpoint/openai/v1/chat/completions" -Body $body -ContentType "application/json" `
+        Invoke-RestMethod -Method Post -Uri "$Endpoint/openai/v1/responses" -Body $body -ContentType "application/json" `
             -Headers @{ "Authorization" = "Bearer $ApiKey" } -TimeoutSec 60 | Out-Null
         return @{ ok = $true }
     } catch {
@@ -145,12 +146,12 @@ foreach ($m in $OpenAiModels) {
     else { Write-Warn "openai/$m - not deployed ($($r.status))" }
 }
 
-if ($authFailed) {
-    Write-Bad "`nKey was rejected. Nothing was written. Check the key and endpoint."
-    exit 1
-}
-if ($deployed.anthropic.Count -eq 0 -and $deployed.openai.Count -eq 0) {
-    Write-Bad "`nNo deployments reachable. Nothing was written."
+if ($deployed.openai.Count -eq 0) {
+    if ($authFailed) {
+        Write-Bad "`nNo GPT deployment probe succeeded; authentication was rejected. Nothing was written. Check the key and endpoint."
+    } else {
+        Write-Bad "`nNo GPT deployment probe succeeded. Nothing was written."
+    }
     exit 1
 }
 
@@ -208,11 +209,37 @@ if ($deployed.anthropic.Count -gt 0) {
         options = [PSCustomObject]@{ apiKey = $ApiKey; baseURL = "$Endpoint/anthropic/v1" }
     }) -Force
     Write-Ok "provider.anthropic -> $Endpoint/anthropic/v1"
+} else {
+    Write-Warn "No Anthropic deployment found; GPT setup will continue."
 }
 if ($deployed.openai.Count -gt 0) {
-    $cfg.provider | Add-Member -NotePropertyName openai -NotePropertyValue ([PSCustomObject]@{
-        options = [PSCustomObject]@{ apiKey = $ApiKey; baseURL = "$Endpoint/openai/v1" }
-    }) -Force
+    if (-not $cfg.provider.PSObject.Properties['openai']) {
+        $cfg.provider | Add-Member -NotePropertyName openai -NotePropertyValue ([PSCustomObject]@{})
+    }
+    $openai = $cfg.provider.openai
+    $openai | Add-Member -NotePropertyName npm -NotePropertyValue "@ai-sdk/openai" -Force
+    if (-not $openai.PSObject.Properties['options']) {
+        $openai | Add-Member -NotePropertyName options -NotePropertyValue ([PSCustomObject]@{})
+    }
+    $openai.options | Add-Member -NotePropertyName apiKey -NotePropertyValue $ApiKey -Force
+    $openai.options | Add-Member -NotePropertyName baseURL -NotePropertyValue "$Endpoint/openai/v1" -Force
+    if (-not $openai.PSObject.Properties['models']) {
+        $openai | Add-Member -NotePropertyName models -NotePropertyValue ([PSCustomObject]@{})
+    }
+    foreach ($m in $deployed.openai) {
+        $displayName = switch ($m) {
+            "gpt-5.6-sol-1" { "GPT-5.6 Sol" }
+            "gpt-5.6-terra-1" { "GPT-5.6 Terra" }
+            "gpt-5.6-luna-1" { "GPT-5.6 Luna" }
+            default { $m }
+        }
+        $openai.models | Add-Member -NotePropertyName $m -NotePropertyValue ([PSCustomObject]@{
+            name = $displayName
+            reasoning = $true
+            tool_call = $true
+            limit = [PSCustomObject]@{ context = 1050000; output = 128000 }
+        }) -Force
+    }
     Write-Ok "provider.openai -> $Endpoint/openai/v1"
 }
 
