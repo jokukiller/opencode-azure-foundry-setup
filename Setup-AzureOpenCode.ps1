@@ -172,6 +172,22 @@ foreach ($m in $OpenAiModels.Keys) {
     else { Write-Warn "openai/$m - deployment $deployment unavailable ($($r.status))" }
 }
 
+$anthropicEndpointToConfigure = $Endpoint
+$anthropicApiKeyToConfigure = $ApiKey
+if ($AnthropicEndpoint) {
+    $r = Test-AnthropicModel -Model $AnthropicModel -TargetEndpoint $AnthropicEndpoint -TargetApiKey $AnthropicApiKey
+    if ($r.ok) {
+        $deployed.anthropic = @($AnthropicModel)
+        $anthropicEndpointToConfigure = $AnthropicEndpoint
+        $anthropicApiKeyToConfigure = $AnthropicApiKey
+        Write-Ok "anthropic/$AnthropicModel -> $AnthropicEndpoint/anthropic/v1"
+    } elseif ($r.status -eq 401 -or $r.status -eq 403) {
+        Write-Warn "anthropic/$AnthropicModel - authentication rejected ($($r.status)); existing provider left unchanged"
+    } else {
+        Write-Warn "anthropic/$AnthropicModel - deployment unavailable ($($r.status)); existing provider left unchanged"
+    }
+}
+
 if ($deployed.openai.Count -eq 0) {
     if ($authFailed) {
         Write-Bad "`nNo GPT deployment probe succeeded; authentication was rejected. Nothing was written. Check the key and endpoint."
@@ -232,27 +248,18 @@ if (-not $cfg.PSObject.Properties['provider']) {
 
 if ($deployed.anthropic.Count -gt 0) {
     $cfg.provider | Add-Member -NotePropertyName anthropic -NotePropertyValue ([PSCustomObject]@{
-        options = [PSCustomObject]@{ apiKey = $ApiKey; baseURL = "$Endpoint/anthropic/v1" }
+        options = [PSCustomObject]@{ apiKey = $anthropicApiKeyToConfigure; baseURL = "$anthropicEndpointToConfigure/anthropic/v1" }
     }) -Force
-    Write-Ok "provider.anthropic -> $Endpoint/anthropic/v1"
+    Write-Ok "provider.anthropic -> $anthropicEndpointToConfigure/anthropic/v1"
 } else {
     Write-Warn "No Anthropic deployment found; GPT setup will continue."
 }
-if ($separateAnthropicDeployed) {
-    if (-not $cfg.provider.PSObject.Properties['anthropic-2']) {
-        $cfg.provider | Add-Member -NotePropertyName 'anthropic-2' -NotePropertyValue ([PSCustomObject]@{})
+if ($AnthropicEndpoint -and $cfg.provider.PSObject.Properties['anthropic-2']) {
+    $legacy = $cfg.provider.'anthropic-2'
+    if ($legacy.name -eq 'anthropic (region 2)' -and $legacy.options.baseURL -eq "$AnthropicEndpoint/anthropic/v1") {
+        $cfg.provider.PSObject.Properties.Remove('anthropic-2')
+        Write-Ok "Removed legacy anthropic-2 provider"
     }
-    $anthropic2 = $cfg.provider.'anthropic-2'
-    $anthropic2 | Add-Member -NotePropertyName name -NotePropertyValue 'anthropic (region 2)' -Force
-    $anthropic2 | Add-Member -NotePropertyName npm -NotePropertyValue '@ai-sdk/anthropic' -Force
-    $anthropic2 | Add-Member -NotePropertyName options -NotePropertyValue ([PSCustomObject]@{}) -Force
-    $anthropic2.options | Add-Member -NotePropertyName apiKey -NotePropertyValue $AnthropicApiKey -Force
-    $anthropic2.options | Add-Member -NotePropertyName baseURL -NotePropertyValue "$AnthropicEndpoint/anthropic/v1" -Force
-    $anthropic2 | Add-Member -NotePropertyName models -NotePropertyValue ([PSCustomObject]@{}) -Force
-    $anthropic2.models | Add-Member -NotePropertyName $AnthropicModel -NotePropertyValue ([PSCustomObject]@{
-        name = "$AnthropicModel #2"
-    }) -Force
-    Write-Ok "provider.anthropic-2 -> $AnthropicEndpoint/anthropic/v1"
 }
 if ($deployed.openai.Count -gt 0) {
     if (-not $cfg.provider.PSObject.Properties['openai']) {
@@ -275,19 +282,6 @@ if ($deployed.openai.Count -gt 0) {
         }
     }
     Write-Ok "provider.openai -> $Endpoint/openai/v1"
-}
-
-$separateAnthropicDeployed = $false
-if ($AnthropicEndpoint) {
-    $r = Test-AnthropicModel -Model $AnthropicModel -TargetEndpoint $AnthropicEndpoint -TargetApiKey $AnthropicApiKey
-    if ($r.ok) {
-        $separateAnthropicDeployed = $true
-        Write-Ok "anthropic-2/$AnthropicModel -> $AnthropicEndpoint/anthropic/v1"
-    } elseif ($r.status -eq 401 -or $r.status -eq 403) {
-        Write-Warn "anthropic-2/$AnthropicModel - authentication rejected ($($r.status)); provider not written"
-    } else {
-        Write-Warn "anthropic-2/$AnthropicModel - deployment unavailable ($($r.status)); provider not written"
-    }
 }
 
 # Keep canonical OpenAI model ids in the picker while translating them to Azure

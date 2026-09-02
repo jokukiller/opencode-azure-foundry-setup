@@ -4,9 +4,9 @@ Configures [OpenCode](https://opencode.ai) to use GPT models, plus any available
 Claude models, hosted on a single primary Azure AI Foundry resource.
 
 This script configures the primary resource (`openai`, plus `anthropic` when a
-supported Claude deployment is available). It can also optionally add a
-separate `anthropic-2` provider for another resource and key. Missing Claude
-deployments do not block GPT setup.
+supported Claude deployment is available). A separate Anthropic endpoint/key
+replaces the existing native `anthropic` provider rather than creating a custom
+provider. Missing Claude deployments do not block GPT setup.
 ## Use
 
 1. Install OpenCode (**1.18.5 or newer** — see [Versions](#versions)).
@@ -34,8 +34,8 @@ deployments do not block GPT setup.
 
 5. Pick a model from the picker.
 
-To add a separate Anthropic resource, supply its endpoint and key. If the key
-is omitted, the script prompts securely:
+To use a separate Anthropic resource/key for the native provider, supply its
+endpoint and key. If the key is omitted, the script prompts securely:
 
 ```powershell
 .\Setup-AzureOpenCode.ps1 `
@@ -43,8 +43,8 @@ is omitted, the script prompts securely:
   -AnthropicModel "claude-opus-4-8"
 ```
 
-The model is selected as `anthropic-2/claude-opus-4-8`; it does not replace the
-primary `anthropic` provider.
+The model remains `anthropic/claude-opus-4-8`, preserving native metadata and
+reasoning variants such as `max`.
 
 ## Scope
 
@@ -83,8 +83,9 @@ key is not scoped to one repo.
 Validates the key, discovers which models are actually deployed, then writes
 `~/.config/opencode/opencode.json`.
 
-Its scope is one primary resource, plus an optional separate Anthropic
-resource. The optional endpoint and key are used only when supplied together.
+Its scope is one primary resource, with an optional separate endpoint/key for
+the native Anthropic provider. The optional endpoint and key are used only when
+supplied together.
 
 - Backs up any existing config first (`.bak-<timestamp>`).
 - Writes **nothing** if the key is rejected or no deployment responds.
@@ -96,8 +97,8 @@ resource. The optional endpoint and key are used only when supplied together.
 - Keeps OpenCode's native `openai` provider and canonical model IDs, preserving
   registry-provided limits, capabilities, reasoning variants, and future updates.
 - Safe to re-run.
-- A failed optional `anthropic-2` probe is reported as a warning and does not
-  block the GPT setup.
+- A failed optional Anthropic probe is reported as a warning and does not block
+  the GPT setup.
 
 Note: if your config is `.jsonc`, comments are lost on rewrite. The backup keeps
 them.
