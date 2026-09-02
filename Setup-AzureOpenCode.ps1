@@ -39,6 +39,9 @@
 param(
     [string] $ApiKey,
     [string] $Endpoint = "https://crosssans0786-3936-resource.services.ai.azure.com",
+    [string] $AnthropicEndpoint,
+    [string] $AnthropicApiKey,
+    [string] $AnthropicModel = "claude-opus-4-8",
     [switch] $Force
 )
 
@@ -100,17 +103,35 @@ if (-not $ApiKey) {
 }
 if ([string]::IsNullOrWhiteSpace($ApiKey)) { Write-Bad "No key supplied."; exit 1 }
 
+if ($AnthropicApiKey -and -not $AnthropicEndpoint) {
+    Write-Bad "AnthropicApiKey requires AnthropicEndpoint."
+    exit 1
+}
+if ($AnthropicEndpoint) {
+    $AnthropicEndpoint = $AnthropicEndpoint.TrimEnd("/")
+    if (-not $AnthropicApiKey) {
+        $secure = Read-Host -Prompt "`nSeparate Anthropic resource key" -AsSecureString
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        try { $AnthropicApiKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr) }
+        finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+    }
+    if ([string]::IsNullOrWhiteSpace($AnthropicApiKey)) {
+        Write-Bad "No separate Anthropic key supplied."
+        exit 1
+    }
+}
+
 $Endpoint = $Endpoint.TrimEnd("/")
 
 # --------------------------------------------------------------------------
 # 3. Probe deployments
 # --------------------------------------------------------------------------
 function Test-AnthropicModel {
-    param($Model)
+    param($Model, $TargetEndpoint, $TargetApiKey)
     $body = @{ model = $Model; max_tokens = 8; messages = @(@{ role = "user"; content = "hi" }) } | ConvertTo-Json -Depth 6
     try {
-        Invoke-RestMethod -Method Post -Uri "$Endpoint/anthropic/v1/messages" -Body $body -ContentType "application/json" `
-            -Headers @{ "x-api-key" = $ApiKey; "anthropic-version" = "2023-06-01" } -TimeoutSec 60 | Out-Null
+        Invoke-RestMethod -Method Post -Uri "$TargetEndpoint/anthropic/v1/messages" -Body $body -ContentType "application/json" `
+            -Headers @{ "x-api-key" = $TargetApiKey; "anthropic-version" = "2023-06-01" } -TimeoutSec 60 | Out-Null
         return @{ ok = $true }
     } catch {
         return @{ ok = $false; status = $_.Exception.Response.StatusCode.value__ }
@@ -138,7 +159,7 @@ $deployed = @{ anthropic = @(); openai = @() }
 $authFailed = $false
 
 foreach ($m in $AnthropicModels) {
-    $r = Test-AnthropicModel -Model $m
+    $r = Test-AnthropicModel -Model $m -TargetEndpoint $Endpoint -TargetApiKey $ApiKey
     if ($r.ok) { $deployed.anthropic += $m; Write-Ok "anthropic/$m" }
     elseif ($r.status -eq 401 -or $r.status -eq 403) { Write-Bad "anthropic/$m - auth rejected ($($r.status))"; $authFailed = $true }
     else { Write-Warn "anthropic/$m - not deployed ($($r.status))" }
@@ -217,6 +238,22 @@ if ($deployed.anthropic.Count -gt 0) {
 } else {
     Write-Warn "No Anthropic deployment found; GPT setup will continue."
 }
+if ($separateAnthropicDeployed) {
+    if (-not $cfg.provider.PSObject.Properties['anthropic-2']) {
+        $cfg.provider | Add-Member -NotePropertyName 'anthropic-2' -NotePropertyValue ([PSCustomObject]@{})
+    }
+    $anthropic2 = $cfg.provider.'anthropic-2'
+    $anthropic2 | Add-Member -NotePropertyName name -NotePropertyValue 'anthropic (region 2)' -Force
+    $anthropic2 | Add-Member -NotePropertyName npm -NotePropertyValue '@ai-sdk/anthropic' -Force
+    $anthropic2 | Add-Member -NotePropertyName options -NotePropertyValue ([PSCustomObject]@{}) -Force
+    $anthropic2.options | Add-Member -NotePropertyName apiKey -NotePropertyValue $AnthropicApiKey -Force
+    $anthropic2.options | Add-Member -NotePropertyName baseURL -NotePropertyValue "$AnthropicEndpoint/anthropic/v1" -Force
+    $anthropic2 | Add-Member -NotePropertyName models -NotePropertyValue ([PSCustomObject]@{}) -Force
+    $anthropic2.models | Add-Member -NotePropertyName $AnthropicModel -NotePropertyValue ([PSCustomObject]@{
+        name = "$AnthropicModel #2"
+    }) -Force
+    Write-Ok "provider.anthropic-2 -> $AnthropicEndpoint/anthropic/v1"
+}
 if ($deployed.openai.Count -gt 0) {
     if (-not $cfg.provider.PSObject.Properties['openai']) {
         $cfg.provider | Add-Member -NotePropertyName openai -NotePropertyValue ([PSCustomObject]@{})
@@ -238,6 +275,19 @@ if ($deployed.openai.Count -gt 0) {
         }
     }
     Write-Ok "provider.openai -> $Endpoint/openai/v1"
+}
+
+$separateAnthropicDeployed = $false
+if ($AnthropicEndpoint) {
+    $r = Test-AnthropicModel -Model $AnthropicModel -TargetEndpoint $AnthropicEndpoint -TargetApiKey $AnthropicApiKey
+    if ($r.ok) {
+        $separateAnthropicDeployed = $true
+        Write-Ok "anthropic-2/$AnthropicModel -> $AnthropicEndpoint/anthropic/v1"
+    } elseif ($r.status -eq 401 -or $r.status -eq 403) {
+        Write-Warn "anthropic-2/$AnthropicModel - authentication rejected ($($r.status)); provider not written"
+    } else {
+        Write-Warn "anthropic-2/$AnthropicModel - deployment unavailable ($($r.status)); provider not written"
+    }
 }
 
 # Keep canonical OpenAI model ids in the picker while translating them to Azure
