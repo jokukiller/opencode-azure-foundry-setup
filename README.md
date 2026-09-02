@@ -46,17 +46,38 @@ endpoint and key. If the key is omitted, the script prompts securely:
 The model remains `anthropic/claude-opus-4-8`, preserving native metadata and
 reasoning variants such as `max`.
 
+A **second** Anthropic resource needs its own provider id, because a provider is
+exactly one `baseURL` plus one key. Supply it with `-Anthropic2Endpoint` and it
+is written as `anthropic-2`:
+
+```powershell
+.\Setup-AzureOpenCode.ps1 `
+  -AnthropicEndpoint  "https://<resource-a>.services.ai.azure.com" `
+  -Anthropic2Endpoint "https://<resource-b>.services.ai.azure.com" `
+  -Anthropic2Model    "claude-opus-5"
+```
+
+That model is selected as `anthropic-2/claude-opus-5`. Both keys are prompted
+for securely when omitted.
+
 ## Scope
 
 **Global, not per-project.** Run the script from any directory — your Downloads
 folder, wherever you cloned this, anywhere. It uses no relative paths and does
 not care about the working directory.
 
-It writes two files:
+It writes:
 
 ```
 %USERPROFILE%\.config\opencode\opencode.json
 %USERPROFILE%\.config\opencode\ext\openai-deployment-map.ts
+```
+
+Plus these two only when `-Anthropic2Endpoint` is used:
+
+```
+%USERPROFILE%\.config\opencode\ext\provider-mirror.ts
+%USERPROFILE%\.config\opencode\ext\provider-derivation.mjs
 ```
 
 That is OpenCode's **global** config, so every project on the machine gets the
@@ -83,9 +104,9 @@ key is not scoped to one repo.
 Validates the key, discovers which models are actually deployed, then writes
 `~/.config/opencode/opencode.json`.
 
-Its scope is one primary resource, with an optional separate endpoint/key for
-the native Anthropic provider. The optional endpoint and key are used only when
-supplied together.
+Its scope is one primary resource, an optional separate endpoint/key for the
+native Anthropic provider, and an optional second Anthropic resource written as
+`anthropic-2`. Optional endpoints and keys are used only when supplied together.
 
 - Backs up any existing config first (`.bak-<timestamp>`).
 - Writes **nothing** if the key is rejected or no deployment responds.
@@ -99,6 +120,8 @@ supplied together.
 - Safe to re-run.
 - A failed optional Anthropic probe is reported as a warning and does not block
   the GPT setup.
+- Installs `provider-mirror` alongside `anthropic-2` so the clone inherits the
+  native `anthropic` registry metadata instead of guessed defaults.
 
 Note: if your config is `.jsonc`, comments are lost on rewrite. The backup keeps
 them.
@@ -137,6 +160,16 @@ Azure's deployment names have a `-1` suffix. The installed transport plugin
 changes only the outgoing `model` field to the matching suffixed deployment.
 The picker and metadata stay native, including `max` reasoning and Fast/Pro
 modes added by OpenCode updates.
+
+**A second resource cannot reuse a native provider.** A provider entry is one
+`baseURL` plus one key, so a second Anthropic resource has to be its own
+provider id (`anthropic-2`). OpenCode resolves models.dev metadata *by provider
+id*, so on its own that clone gets guessed defaults: a 200K context and no
+reasoning levels. The short context is the harmful one — it triggers compaction
+at a fifth of the real window, and compaction replaces history, so sessions get
+silently shredded. The bundled `provider-mirror` plugin copies the native
+`anthropic` registry entry onto the clone and keeps tracking upstream, so
+`anthropic-2` reports its true 1M context and the full effort ladder.
 
 ## Gotchas
 
