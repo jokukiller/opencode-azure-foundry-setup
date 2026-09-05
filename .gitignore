@@ -4,3 +4,11 @@ opencode.jsonc
 *.bak-*
 *.bak
 .env
+
+# Native Codex outputs if CODEX_HOME is placed in this checkout. Backups above
+# may contain pre-existing secrets; do not broadly ignore source/test fixtures.
+/.codex/
+/config.toml
+/auth.json
+/azure-foundry-models.json
+/.codex-stage-*

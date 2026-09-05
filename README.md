@@ -1,13 +1,18 @@
-# OpenCode ↔ Azure AI Foundry setup
+# OpenCode / Windows Codex ↔ Azure AI Foundry setup
 
 Configures [OpenCode](https://opencode.ai) to use GPT models, plus any available
 Claude models, hosted on a single primary Azure AI Foundry resource.
+
+Alternatively, `-Codex` configures only the official Windows Codex/ChatGPT
+desktop coding experience with Azure GPT models. It does not need or configure
+OpenCode. Without that switch (including `-Codex:$false`), OpenCode behavior is
+unchanged.
 
 This script configures the primary resource (`openai`, plus `anthropic` when a
 supported Claude deployment is available). A separate Anthropic endpoint/key
 replaces the existing native `anthropic` provider rather than creating a custom
 provider. Missing Claude deployments do not block GPT setup.
-## Use
+## OpenCode use
 
 1. Install OpenCode (**1.18.5 or newer** — see [Versions](#versions)).
 2. Get the resource key from whoever shared this with you. It is **not** in this
@@ -60,7 +65,103 @@ is written as `anthropic-2`:
 That model is selected as `anthropic-2/claude-opus-5`. Both keys are prompted
 for securely when omitted.
 
+## Codex / ChatGPT desktop coding on Windows
+
+Prerequisites: Windows PowerShell 5.1 or newer, an up-to-date official Windows
+Codex app / ChatGPT app with the Codex coding experience, **or** the Codex CLI on
+PATH; an Azure Foundry resource endpoint/key; and at least one supported GPT
+deployment. Node/npm, OpenCode and a ChatGPT/OpenAI subscription are not required
+for local Azure-backed work. Azure usage is billed to your resource. This does
+not configure hosted Codex cloud tasks or the ordinary ChatGPT chat model picker.
+
+Clone this repo, open PowerShell in it, and run:
+
+```powershell
+.\Setup-AzureOpenCode.ps1 -Codex -Endpoint "https://YOUR-RESOURCE.services.ai.azure.com"
+```
+
+The key is prompted securely. Do not put keys in command lines or shell history.
+Use an HTTPS **resource root**, not a URL containing `/openai/v1`, a deployment
+path, credentials, query parameters or a fragment. All explicitly supplied
+`-Anthropic*` arguments are rejected in this mode, even empty ones; no Anthropic
+keys are requested and no Anthropic requests are sent.
+
+Setup probes the existing unsuffixed GPT candidate IDs through the Responses
+API. At least one must succeed. Only verified deployments enter the generated
+catalog: `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, as available.
+Astra is the default when available; otherwise a successful model is selected.
+The model IDs have no `openai/` prefix.
+
+It writes these **global native Windows** files under absolute `CODEX_HOME`, or
+`%USERPROFILE%\.codex` when that variable is unset:
+
+```text
+config.toml
+azure-foundry-models.json
+```
+
+The provider is `azure_foundry`, using `$Endpoint/openai/v1`, the Responses wire
+API, and no WebSockets or OpenAI login. The resource key is persisted in the
+Windows **user-level environment** variable `CODEX_AZURE_API_KEY` and the current
+PowerShell process, not in the generated catalog/TOML. This is ordinary,
+unencrypted user environment storage, not a credential vault. Other user
+processes can access it. Existing native OpenAI `auth.json` is neither read nor
+changed. The shell policy's `ignore_default_excludes` is set to `false` so Codex's
+default secret-variable exclusions apply to agent subprocesses; other shell
+policy settings, sandbox settings and approval policies are preserved. Do not
+deliberately reintroduce the key through shell policy `set` or project tools.
+
+The catalog is derived from the public official
+[`rust-v0.153.4` catalog snapshot](https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/codex-rs/models-manager/models.json),
+tested with Codex engine **0.153.4**. Every selected model retains its own native
+prompt prefix, variables, tools, reasoning metadata and other capabilities.
+Only the context fields and the exact `# Security engineering` paragraph block
+in `Setup-AzureCodex.ps1` are added/updated (including legacy instructions when
+present). There is no generic prompt fallback. This pin is intentional: upstream
+prompt changes require reviewing/updating the pin and rerunning setup, not
+automatic tracking. `model_catalog_json` **replaces**, rather than extends, the
+bundled catalog.
+
+Configured context is **1,050,000 total tokens**, with **913,500 usable tokens**
+at 87% and a **900,000-token compaction threshold**. The catalog's maximum context
+is raised alongside the root config, so it does not clamp that setting. Azure's
+documented limits are 1,050,000 total, 922,000 maximum input and 128,000 maximum
+output; this is **not** one million usable input tokens. The prompt addition does
+not change Azure filtering or guarantee that every request will be answered.
+
+Existing files require confirmation; `-Force` skips only that confirmation, not
+endpoint/probe/catalog/TOML validation. Replaced files get unique
+`.bak-<timestamp>-<id>` backups; unchanged files are not rewritten. The merge
+preserves unrelated UTF-8 TOML text, comments and multiline strings, updating
+only managed scalar values and the dedicated provider/shell-policy keys. It
+accepts bare or unescaped quoted key names and ordinary tables. Conflicting
+inline/dotted forms, escaped key names, duplicate managed keys/tables or complex
+managed values cause a failure without writes. This is deliberately not a general
+TOML repair tool. A root `model_instructions_file` or legacy `instructions`,
+`experimental_instructions_file` / `base_instructions` override must be migrated
+or removed by you first so native catalog prompts are not hidden. Profiles,
+project config and managed policies can still override global settings.
+
+Files are staged together, then replaced atomically per file, with file and
+credential rollback on installation errors. Keep the app closed and avoid
+concurrent config edits while setting up. An OS crash/power loss or a failed
+rollback cannot be made atomic across two files and the Windows environment;
+retain the backups and follow any reported recovery guidance. No app is
+installed, launched, quit or restarted by this script, and protected WindowsApps
+executables are never invoked. Desktop and engine versions can differ; update
+both if custom providers/catalogs are not recognized.
+
+After setup, **fully quit and reopen the desktop app and start a NEW chat**.
+If your launcher still has a stale environment, sign out of Windows and back in.
+WSL has its own home, config, environment and Codex installation; this native
+Windows setup does not configure WSL.
+
+Official references: [custom providers and advanced configuration](https://developers.openai.com/codex/config-advanced/)
+and [configuration reference](https://developers.openai.com/codex/config-reference/).
+
 ## Scope
+
+The following sections describe the default OpenCode mode.
 
 **Global, not per-project.** Run the script from any directory — your Downloads
 folder, wherever you cloned this, anywhere. It uses no relative paths and does

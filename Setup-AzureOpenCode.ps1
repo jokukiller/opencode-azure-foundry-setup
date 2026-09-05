@@ -37,13 +37,16 @@
     provider-mirror plugin.
 
 .PARAMETER Force
-    Overwrite existing anthropic/openai provider entries without confirming.
+    Overwrite existing client configuration without confirming. Validation still runs.
+
+.PARAMETER Codex
+    Configure only the official Windows Codex/ChatGPT coding experience, not OpenCode.
 
 .EXAMPLE
     .\Setup-AzureOpenCode.ps1
 
 .EXAMPLE
-    .\Setup-AzureOpenCode.ps1 -ApiKey "abc123..." -Force
+    .\Setup-AzureOpenCode.ps1 -Codex -Endpoint "https://YOUR-RESOURCE.services.ai.azure.com"
 
 .EXAMPLE
     .\Setup-AzureOpenCode.ps1 `
@@ -60,7 +63,8 @@ param(
     [string] $Anthropic2Endpoint,
     [string] $Anthropic2ApiKey,
     [string] $Anthropic2Model = "claude-opus-5",
-    [switch] $Force
+    [switch] $Force,
+    [switch] $Codex
 )
 
 $ErrorActionPreference = "Stop"
@@ -97,6 +101,17 @@ function Read-ResourceKey {
 # --------------------------------------------------------------------------
 # 1. Preflight
 # --------------------------------------------------------------------------
+if ($Codex) {
+    foreach ($name in $PSBoundParameters.Keys) {
+        if ($name -like 'Anthropic*') {
+            throw "-Codex cannot be combined with explicitly supplied -$name. Omit all Anthropic options."
+        }
+    }
+    . (Join-Path $PSScriptRoot "Setup-AzureCodex.ps1")
+    $Endpoint = Resolve-CodexEndpoint $Endpoint
+    Write-Step "Checking Windows Codex"
+    Assert-CodexInstalled
+} else {
 Write-Step "Checking OpenCode"
 
 $openCodeCmd = Get-Command opencode -ErrorAction SilentlyContinue
@@ -120,6 +135,7 @@ if (-not $foundAny) {
 
 Write-Warn "The desktop app and the CLI update independently. If one behaves"
 Write-Warn "differently from the other, check both versions before debugging."
+}
 
 # --------------------------------------------------------------------------
 # 2. Key
@@ -127,6 +143,7 @@ Write-Warn "differently from the other, check both versions before debugging."
 if (-not $ApiKey) { $ApiKey = Read-ResourceKey "Azure resource key" }
 if ([string]::IsNullOrWhiteSpace($ApiKey)) { Write-Bad "No key supplied."; exit 1 }
 
+if (-not $Codex) {
 if ($AnthropicApiKey -and -not $AnthropicEndpoint) {
     Write-Bad "AnthropicApiKey requires AnthropicEndpoint."
     exit 1
@@ -152,6 +169,7 @@ if ($Anthropic2Endpoint) {
         exit 1
     }
 }
+}
 
 $Endpoint = $Endpoint.TrimEnd("/")
 
@@ -176,9 +194,12 @@ function Test-OpenAiModel {
     # models. A successful Chat Completions request alone does not prove that
     # reasoning, cache, and tool workflows through the Responses API will work.
     $body = @{ model = $Model; max_output_tokens = 16; input = "hi" } | ConvertTo-Json -Depth 6
+    $requestOptions = @{}
+    # Do not forward a Codex resource key through an HTTP redirect.
+    if ($Codex) { $requestOptions.MaximumRedirection = 0 }
     try {
         Invoke-RestMethod -Method Post -Uri "$Endpoint/openai/v1/responses" -Body $body -ContentType "application/json" `
-            -Headers @{ "Authorization" = "Bearer $ApiKey" } -TimeoutSec 60 | Out-Null
+            -Headers @{ "Authorization" = "Bearer $ApiKey" } -TimeoutSec 60 @requestOptions | Out-Null
         return @{ ok = $true }
     } catch {
         return @{ ok = $false; status = $_.Exception.Response.StatusCode.value__ }
@@ -190,11 +211,13 @@ Write-Step "Probing deployments at $Endpoint"
 $deployed = @{ anthropic = @(); openai = @() }
 $authFailed = $false
 
+if (-not $Codex) {
 foreach ($m in $AnthropicModels) {
     $r = Test-AnthropicModel -Model $m -TargetEndpoint $Endpoint -TargetApiKey $ApiKey
     if ($r.ok) { $deployed.anthropic += $m; Write-Ok "anthropic/$m" }
     elseif ($r.status -eq 401 -or $r.status -eq 403) { Write-Bad "anthropic/$m - auth rejected ($($r.status))"; $authFailed = $true }
     else { Write-Warn "anthropic/$m - not deployed ($($r.status))" }
+}
 }
 foreach ($m in $OpenAiModels.Keys) {
     $deployment = $OpenAiModels[$m]
@@ -204,6 +227,7 @@ foreach ($m in $OpenAiModels.Keys) {
     else { Write-Warn "openai/$m - deployment $deployment unavailable ($($r.status))" }
 }
 
+if (-not $Codex) {
 $anthropicEndpointToConfigure = $Endpoint
 $anthropicApiKeyToConfigure = $ApiKey
 if ($AnthropicEndpoint) {
@@ -234,6 +258,7 @@ if ($Anthropic2Endpoint) {
         Write-Warn "anthropic-2/$Anthropic2Model - deployment unavailable ($($r.status)); provider not written"
     }
 }
+}
 
 if ($deployed.openai.Count -eq 0) {
     if ($authFailed) {
@@ -241,7 +266,13 @@ if ($deployed.openai.Count -eq 0) {
     } else {
         Write-Bad "`nNo GPT deployment probe succeeded. Nothing was written."
     }
+    if ($Codex) { throw "Codex setup requires at least one successful GPT Responses probe. Nothing was written." }
     exit 1
+}
+
+if ($Codex) {
+    Install-AzureCodex -Endpoint $Endpoint -ApiKey $ApiKey -Models $deployed.openai -Force:$Force
+    return
 }
 
 # --------------------------------------------------------------------------
