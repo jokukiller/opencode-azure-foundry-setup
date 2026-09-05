@@ -152,14 +152,17 @@ The symptom is just sessions that never get titles. The script sets this for you
 
 OpenCode continues to expose the canonical native models:
 
+- `openai/gpt-6-astra`
 - `openai/gpt-5.6-sol`
 - `openai/gpt-5.6-terra`
 - `openai/gpt-5.6-luna`
 
-Azure's deployment names have a `-1` suffix. The installed transport plugin
-changes only the outgoing `model` field to the matching suffixed deployment.
-The picker and metadata stay native, including `max` reasoning and Fast/Pro
-modes added by OpenCode updates.
+Deployment names match these model IDs without the `openai/` prefix or a `-1`
+suffix. Probes and the installed transport plugin use the same unsuffixed names.
+Re-run setup to replace a mapper installed by an older version. Legacy suffixed
+model entries are removed, while canonical model overrides are preserved.
+The picker and metadata stay native, including reasoning variants added by
+OpenCode updates.
 
 **A second resource cannot reuse a native provider.** A provider entry is one
 `baseURL` plus one key, so a second Anthropic resource has to be its own

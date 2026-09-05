@@ -70,9 +70,10 @@ $ErrorActionPreference = "Stop"
 # harmless - add new model ids here as they are deployed.
 $AnthropicModels = @("claude-opus-5", "claude-opus-4-8")
 $OpenAiModels = [ordered]@{
-    "gpt-5.6-sol"   = "gpt-5.6-sol-1"
-    "gpt-5.6-luna"  = "gpt-5.6-luna-1"
-    "gpt-5.6-terra" = "gpt-5.6-terra-1"
+    "gpt-6-astra"   = "gpt-6-astra"
+    "gpt-5.6-sol"   = "gpt-5.6-sol"
+    "gpt-5.6-luna"  = "gpt-5.6-luna"
+    "gpt-5.6-terra" = "gpt-5.6-terra"
 }
 
 # Preferred background model, best first. Titles and summaries use this.
@@ -337,11 +338,10 @@ if ($deployed.openai.Count -gt 0) {
     }
     $openai.options | Add-Member -NotePropertyName apiKey -NotePropertyValue $ApiKey -Force
     $openai.options | Add-Member -NotePropertyName baseURL -NotePropertyValue "$Endpoint/openai/v1" -Force
-    # Remove entries created by versions of this script that exposed deployment
-    # names as custom models. Canonical native models keep models.dev metadata.
+    # Remove only legacy suffixed deployment aliases, not canonical model overrides.
     if ($openai.PSObject.Properties['models']) {
-        foreach ($deployment in $OpenAiModels.Values) {
-            $openai.models.PSObject.Properties.Remove($deployment)
+        foreach ($model in @('gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra')) {
+            $openai.models.PSObject.Properties.Remove("$model-1")
         }
         if ($openai.models.PSObject.Properties.Count -eq 0) {
             $openai.PSObject.Properties.Remove('models')

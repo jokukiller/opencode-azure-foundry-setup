@@ -1,9 +1,10 @@
 const MARK = Symbol.for("openai-deployment-map.fetch")
 
 const DEPLOYMENTS: Record<string, string> = {
-  "gpt-5.6-sol": "gpt-5.6-sol-1",
-  "gpt-5.6-terra": "gpt-5.6-terra-1",
-  "gpt-5.6-luna": "gpt-5.6-luna-1",
+  "gpt-6-astra": "gpt-6-astra",
+  "gpt-5.6-sol": "gpt-5.6-sol",
+  "gpt-5.6-terra": "gpt-5.6-terra",
+  "gpt-5.6-luna": "gpt-5.6-luna",
 }
 
 export default async function openaiDeploymentMap() {
