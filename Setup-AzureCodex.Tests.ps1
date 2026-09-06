@@ -55,7 +55,7 @@ $fixture.models[0].PSObject.Properties.Remove('base_instructions')
 $fixtureJson = Json-Text $fixture
 
 function Assert-CatalogPreserved {
-    param([string] $Original, [string] $Result, [string[]] $Selected)
+    param([string] $Original, [string] $Result, [string[]] $Selected, [switch] $UseCodexDefaults)
     $before = $Original | ConvertFrom-Json
     $after = $Result | ConvertFrom-Json
     Assert-Equal ($after.models.slug -join ',') ($Selected -join ',') 'Catalog must contain only the selected native IDs, in order.'
@@ -79,13 +79,22 @@ function Assert-CatalogPreserved {
         if ($native.PSObject.Properties['base_instructions']) {
             Assert-Equal $model.base_instructions ($native.base_instructions + "`n`n" + $script:CodexSecurityInstructions) 'Legacy native prompt prefix changed.'
         } else { Assert-True (-not $model.PSObject.Properties['base_instructions']) 'Unexpected generic legacy prompt.' }
-        Assert-Equal $model.context_window 1050000 'Context window is wrong.'
-        Assert-Equal $model.max_context_window 1050000 'Maximum context would clamp the window.'
-        Assert-Equal $model.auto_compact_token_limit 900000 'Compaction limit is wrong.'
-        Assert-Equal $model.effective_context_window_percent 87 'Effective percentage is wrong.'
-        Assert-Equal ($model.context_window * $model.effective_context_window_percent / 100) 913500 'Usable context is wrong.'
+        if ($UseCodexDefaults) {
+            foreach ($key in @('context_window', 'max_context_window', 'auto_compact_token_limit', 'effective_context_window_percent')) {
+                $beforeProperty = $native.PSObject.Properties[$key]
+                $afterProperty = $model.PSObject.Properties[$key]
+                Assert-Equal ($null -ne $afterProperty) ($null -ne $beforeProperty) "Default catalog changed property presence: $key"
+                if ($beforeProperty) { Assert-Equal (Json-Text $afterProperty.Value) (Json-Text $beforeProperty.Value) "Default catalog changed: $key" }
+            }
+        } else {
+            Assert-Equal $model.context_window 1050000 'Context window is wrong.'
+            Assert-Equal $model.max_context_window 1050000 'Maximum context would clamp the window.'
+            Assert-Equal $model.auto_compact_token_limit 900000 'Compaction limit is wrong.'
+            Assert-Equal $model.effective_context_window_percent 87 'Effective percentage is wrong.'
+            Assert-Equal ($model.context_window * $model.effective_context_window_percent / 100) 913500 'Usable context is wrong.'
+        }
     }
-    Assert-Equal (New-CodexCatalog -Json $Result -Models $Selected) $Result 'Catalog transformation is not idempotent.'
+    Assert-Equal (New-CodexCatalog -Json $Result -Models $Selected -UseCodexDefaults:$UseCodexDefaults) $Result 'Catalog transformation is not idempotent.'
 }
 
 function New-FakeCredentials {
@@ -132,6 +141,8 @@ try {
             $result = New-CodexCatalog -Json $fixtureJson -Models $selected
             Assert-CatalogPreserved $fixtureJson $result $selected
         }
+        $defaultResult = New-CodexCatalog -Json $fixtureJson -Models $ids -UseCodexDefaults
+        Assert-CatalogPreserved $fixtureJson $defaultResult $ids -UseCodexDefaults
         Assert-Throws { New-CodexCatalog -Json $fixtureJson -Models @() } '*No verified*'
         Assert-Throws { New-CodexCatalog -Json $fixtureJson -Models @('missing') } '*exactly one native entry*'
         Assert-Throws { New-CodexCatalog -Json $fixtureJson -Models @($ids[0], $ids[0]) } '*Duplicate requested*'
@@ -179,6 +190,16 @@ args = [
         Assert-True ($result.Contains("inherit = 'core'`nset = { KEEP = 'value' }")) 'Other shell settings changed.'
         Assert-True ($result.Contains('model_catalog_json = "C:/example user/.codex/azure-foundry-models.json"')) 'Catalog path is not a portable absolute path.'
         Assert-Equal (Merge-CodexConfig $result $endpoint $ids[0] 'C:\example user\.codex\azure-foundry-models.json') $result 'TOML rerun changed content.'
+        $defaultResult = Merge-CodexConfig $result $endpoint $ids[0] 'C:\example user\.codex\azure-foundry-models.json' -UseCodexDefaults
+        $defaultRootKeys = @()
+        foreach ($statement in @(Get-CodexTomlStatements $defaultResult)) {
+            if ($null -eq $statement.Key) { break }
+            $defaultRootKeys += @(ConvertFrom-CodexTomlKey $statement.Key)[0]
+        }
+        Assert-True ($defaultRootKeys -cnotcontains 'model_context_window') 'Default mode retained the context-window override.'
+        Assert-True ($defaultRootKeys -cnotcontains 'model_auto_compact_token_limit') 'Default mode retained the compaction override.'
+        Assert-True ($defaultResult.Contains($untouched)) 'Default mode changed unrelated TOML.'
+        Assert-Equal (Merge-CodexConfig $defaultResult $endpoint $ids[0] 'C:\example user\.codex\azure-foundry-models.json' -UseCodexDefaults) $defaultResult 'Default TOML merge is not idempotent.'
         foreach ($newline in @("`n", "`r`n")) {
             foreach ($key in @('model', '"model"', "'model'")) {
                 for ($i = 0; $i -lt 8; $i++) {
@@ -234,6 +255,16 @@ args = [
         Assert-Equal ([IO.File]::ReadAllText($auth)) '{"fixture":"untouched"}' 'Native auth file was changed.'
         Assert-Equal ([IO.Directory]::GetFiles($homePath, '*.bak-*').Count) 0 'Unchanged files were backed up unnecessarily.'
         Assert-Equal ([IO.Directory]::GetFiles($homePath, '.codex-stage-*').Count) 0 'Staged files were stranded.'
+        $defaultPlan = New-CodexPlan $homePath $endpoint @($ids[2], $ids[0]) $fixtureJson -UseCodexDefaults
+        Assert-True $defaultPlan.UseCodexDefaults 'Default plan flag was lost.'
+        Assert-True (@($defaultPlan.Files | Where-Object { $_.NeedsWrite }).Count -eq 2) 'Switching to defaults should update catalog and config.'
+        Save-CodexPlan $defaultPlan 'test-placeholder' -ReadKey $fake.Read -WriteKey $fake.Write
+        $defaultConfig = [IO.File]::ReadAllText((Join-Path $homePath 'config.toml'))
+        Assert-True ($defaultConfig -notmatch '(?m)^model_context_window\s*=') 'Installed default config retained context expansion.'
+        Assert-True ($defaultConfig -notmatch '(?m)^model_auto_compact_token_limit\s*=') 'Installed default config retained compaction expansion.'
+        Assert-CatalogPreserved $fixtureJson ([IO.File]::ReadAllText((Join-Path $homePath 'azure-foundry-models.json'))) @($ids[2], $ids[0]) -UseCodexDefaults
+        $defaultAgain = New-CodexPlan $homePath $endpoint @($ids[2], $ids[0]) $fixtureJson -UseCodexDefaults
+        Assert-True (-not @($defaultAgain.Files | Where-Object { $_.NeedsWrite }).Count) 'Default rerun would rewrite files.'
         $fallback = New-CodexPlan (Join-Path $work 'fallback') $endpoint @($ids[2]) $fixtureJson
         Assert-Equal $fallback.Model $ids[2] 'A verified non-Astra model should be the fallback.'
     }
@@ -350,6 +381,7 @@ args = [
             'function Read-Host { throw ''PROMPT WAS CALLED'' }'
             "try { & '$escapedMain' -Codex -AnthropicModel ''; throw 'NO REJECTION' } catch { if (`$_.Exception.Message -notlike '*cannot be combined*') { throw }; Write-Host 'exclusive-ok' }"
             "try { & '$escapedMain' -Codex -Endpoint 'http://invalid.example'; throw 'NO VALIDATION' } catch { if (`$_.Exception.Message -notlike '*HTTPS resource root*') { throw }; Write-Host 'endpoint-before-prompt-ok' }"
+            "try { & '$escapedMain' -Default; throw 'NO DEFAULT GUARD' } catch { if (`$_.Exception.Message -notlike '*requires -Codex*') { throw }; Write-Host 'default-exclusive-ok' }"
         ), [Text.UTF8Encoding]::new($false))
         $output = & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $rejectHarness 2>&1
         Assert-Equal $LASTEXITCODE 0 "Codex routing guards failed: $($output -join ' ')"
@@ -375,6 +407,7 @@ args = [
             $public = Get-CodexOfficialCatalog
             Assert-True ($public.Length -gt 100000) 'The pinned public catalog fixture was not downloaded.'
             Assert-CatalogPreserved $public (New-CodexCatalog $public $ids) $ids
+            Assert-CatalogPreserved $public (New-CodexCatalog $public $ids -UseCodexDefaults) $ids -UseCodexDefaults
         }
     }
 } finally {

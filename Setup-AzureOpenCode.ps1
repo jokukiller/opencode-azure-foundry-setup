@@ -42,11 +42,18 @@
 .PARAMETER Codex
     Configure only the official Windows Codex/ChatGPT coding experience, not OpenCode.
 
+.PARAMETER Default
+    With -Codex, keep the official Codex context and compaction defaults instead
+    of applying the expanded Azure context settings.
+
 .EXAMPLE
     .\Setup-AzureOpenCode.ps1
 
 .EXAMPLE
     .\Setup-AzureOpenCode.ps1 -Codex -Endpoint "https://YOUR-RESOURCE.services.ai.azure.com"
+
+.EXAMPLE
+    .\Setup-AzureOpenCode.ps1 -Codex -Default -Endpoint "https://YOUR-RESOURCE.services.ai.azure.com"
 
 .EXAMPLE
     .\Setup-AzureOpenCode.ps1 `
@@ -64,7 +71,8 @@ param(
     [string] $Anthropic2ApiKey,
     [string] $Anthropic2Model = "claude-opus-5",
     [switch] $Force,
-    [switch] $Codex
+    [switch] $Codex,
+    [switch] $Default
 )
 
 $ErrorActionPreference = "Stop"
@@ -101,6 +109,7 @@ function Read-ResourceKey {
 # --------------------------------------------------------------------------
 # 1. Preflight
 # --------------------------------------------------------------------------
+if ($Default -and -not $Codex) { throw "-Default requires -Codex." }
 if ($Codex) {
     foreach ($name in $PSBoundParameters.Keys) {
         if ($name -like 'Anthropic*') {
@@ -271,7 +280,7 @@ if ($deployed.openai.Count -eq 0) {
 }
 
 if ($Codex) {
-    Install-AzureCodex -Endpoint $Endpoint -ApiKey $ApiKey -Models $deployed.openai -Force:$Force
+    Install-AzureCodex -Endpoint $Endpoint -ApiKey $ApiKey -Models $deployed.openai -Force:$Force -UseCodexDefaults:$Default
     return
 }
 
@@ -429,9 +438,9 @@ $cfg | Add-Member -NotePropertyName small_model -NotePropertyValue $small -Force
 Write-Ok "small_model -> $small"
 
 if (-not $cfg.PSObject.Properties['model']) {
-    $default = if ($allDeployed -contains "anthropic/claude-opus-5") { "anthropic/claude-opus-5" } else { $allDeployed[0] }
-    $cfg | Add-Member -NotePropertyName model -NotePropertyValue $default -Force
-    Write-Ok "model -> $default"
+    $defaultModel = if ($allDeployed -contains "anthropic/claude-opus-5") { "anthropic/claude-opus-5" } else { $allDeployed[0] }
+    $cfg | Add-Member -NotePropertyName model -NotePropertyValue $defaultModel -Force
+    Write-Ok "model -> $defaultModel"
 } else {
     Write-Warn "Existing 'model' left as-is: $($cfg.model)"
 }

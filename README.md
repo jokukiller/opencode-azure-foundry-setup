@@ -80,6 +80,13 @@ Clone this repo, open PowerShell in it, and run:
 .\Setup-AzureOpenCode.ps1 -Codex -Endpoint "https://YOUR-RESOURCE.services.ai.azure.com"
 ```
 
+Add `-Default` to keep Codex's official context and compaction defaults while
+still configuring the Azure models and security-engineering prompt addition:
+
+```powershell
+.\Setup-AzureOpenCode.ps1 -Codex -Default -Endpoint "https://YOUR-RESOURCE.services.ai.azure.com"
+```
+
 The key is prompted securely. Do not put keys in command lines or shell history.
 Use an HTTPS **resource root**, not a URL containing `/openai/v1`, a deployment
 path, credentials, query parameters or a fragment. All explicitly supplied
@@ -122,12 +129,15 @@ prompt changes require reviewing/updating the pin and rerunning setup, not
 automatic tracking. `model_catalog_json` **replaces**, rather than extends, the
 bundled catalog.
 
-Configured context is **1,050,000 total tokens**, with **913,500 usable tokens**
+Without `-Default`, configured context is **1,050,000 total tokens**, with **913,500 usable tokens**
 at 87% and a **900,000-token compaction threshold**. The catalog's maximum context
 is raised alongside the root config, so it does not clamp that setting. Azure's
 documented limits are 1,050,000 total, 922,000 maximum input and 128,000 maximum
 output; this is **not** one million usable input tokens. The prompt addition does
 not change Azure filtering or guarantee that every request will be answered.
+With `-Default`, the generated catalog retains the official Codex context fields
+and any context-expansion keys previously written by this script are removed from
+`config.toml`.
 
 Existing files require confirmation; `-Force` skips only that confirmation, not
 endpoint/probe/catalog/TOML validation. Replaced files get unique

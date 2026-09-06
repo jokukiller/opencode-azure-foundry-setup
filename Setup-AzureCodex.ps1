@@ -87,7 +87,7 @@ function Add-CodexSecurityInstructions {
 }
 
 function New-CodexCatalog {
-    param([string] $Json, [string[]] $Models)
+    param([string] $Json, [string[]] $Models, [switch] $UseCodexDefaults)
     if (-not $Models -or $Models.Count -eq 0) { throw 'No verified Codex models were supplied.' }
     try { $catalog = $Json | ConvertFrom-Json -ErrorAction Stop }
     catch { throw 'The pinned Codex catalog is not valid JSON. Nothing was written.' }
@@ -110,9 +110,11 @@ function New-CodexCatalog {
             }
             $model.base_instructions = Add-CodexSecurityInstructions $model.base_instructions
         }
-        foreach ($entry in ([ordered]@{ context_window = 1050000; max_context_window = 1050000; auto_compact_token_limit = 900000; effective_context_window_percent = 87 }).GetEnumerator()) {
-            if ($model.PSObject.Properties[$entry.Key]) { $model.PSObject.Properties[$entry.Key].Value = $entry.Value }
-            else { $model | Add-Member -NotePropertyName $entry.Key -NotePropertyValue $entry.Value }
+        if (-not $UseCodexDefaults) {
+            foreach ($entry in ([ordered]@{ context_window = 1050000; max_context_window = 1050000; auto_compact_token_limit = 900000; effective_context_window_percent = 87 }).GetEnumerator()) {
+                if ($model.PSObject.Properties[$entry.Key]) { $model.PSObject.Properties[$entry.Key].Value = $entry.Value }
+                else { $model | Add-Member -NotePropertyName $entry.Key -NotePropertyValue $entry.Value }
+            }
         }
         $selected += $model
     }
@@ -142,7 +144,8 @@ function Get-CodexTomlStatements {
                 $codeEnd = if ($commentAt -ge 0) { $commentAt } else { $i }
                 $code = $Text.Substring($start, $codeEnd - $start).Trim()
                 if ($code) {
-                    $statement = [pscustomobject]@{ Start = $start; Code = $code; Key = $null; Value = $null; ValueStart = 0 }
+                    $statementEnd = if ($eof) { $i } else { $i + 1 }
+                    $statement = [pscustomobject]@{ Start = $start; End = $statementEnd; Code = $code; Key = $null; Value = $null; ValueStart = 0 }
                     if ($equals -ge 0) {
                         $statement.Key = $Text.Substring($start, $equals - $start).Trim()
                         $valueStart = $equals + 1
@@ -211,14 +214,18 @@ function ConvertFrom-CodexTomlKey {
 }
 
 function Merge-CodexConfig {
-    param([string] $Text, [string] $Endpoint, [string] $Model, [string] $CatalogPath)
+    param([string] $Text, [string] $Endpoint, [string] $Model, [string] $CatalogPath, [switch] $UseCodexDefaults)
     $root = [ordered]@{
         model_provider = '"azure_foundry"'
         model = (ConvertTo-CodexTomlString $Model)
         model_catalog_json = (ConvertTo-CodexTomlString $CatalogPath.Replace('\', '/'))
-        model_context_window = '1050000'
-        model_auto_compact_token_limit = '900000'
     }
+    $contextKeys = @('model_context_window', 'model_auto_compact_token_limit')
+    if (-not $UseCodexDefaults) {
+        $root.model_context_window = '1050000'
+        $root.model_auto_compact_token_limit = '900000'
+    }
+    $managedRootKeys = @($root.Keys) + $contextKeys
     $provider = [ordered]@{
         name = '"Azure Foundry"'
         base_url = (ConvertTo-CodexTomlString "$Endpoint/openai/v1")
@@ -235,6 +242,8 @@ function Merge-CodexConfig {
     }
     $section = 'root'; $path = @()
     $edits = [Collections.Generic.List[object]]::new()
+    $removedContextKeys = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $scalar = '\A(?:"(?:[^"\\\x00-\x1f]|\\(?:["\\btnfr]|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}))*"|''[^''\x00-\x1f]*''|true|false|[+-]?(?:0|[1-9](?:_?[0-9])*))\z'
     foreach ($statement in @(Get-CodexTomlStatements $Text)) {
         if ($null -eq $statement.Key) {
             if ($groups.Contains($section)) { $groups[$section].End = $statement.Start }
@@ -247,7 +256,7 @@ function Merge-CodexConfig {
             if ($overrides -ccontains $path[0]) {
                 throw 'A root native-prompt override is present (model_instructions_file or legacy instructions). Migrate/remove that override yourself in config.toml, then rerun; it would hide catalog prompts.'
             }
-            if (@($root.Keys) -ccontains $path[0]) { throw 'A Codex-managed root scalar is represented as a table. Use a scalar assignment instead.' }
+            if ($managedRootKeys -ccontains $path[0]) { throw 'A Codex-managed root scalar is represented as a table. Use a scalar assignment instead.' }
             if ($path[0] -ceq 'model_providers') {
                 if ($path.Count -eq 1) {
                     if ($arrayTable) { throw 'model_providers cannot be an array of tables.' }
@@ -278,11 +287,17 @@ function Merge-CodexConfig {
             }
         }
         if ($section -eq 'providers' -and $key[0] -ceq 'azure_foundry') { throw 'Use a [model_providers.azure_foundry] table instead of an inline/dotted provider.' }
+        if ($section -eq 'root' -and $UseCodexDefaults -and $contextKeys -ccontains $key[0]) {
+            if ($key.Count -ne 1) { throw "Dotted representation of managed key $($key[0]) is unsupported." }
+            if (-not $removedContextKeys.Add($key[0])) { throw "Duplicate managed TOML key: $($key[0])" }
+            if ($statement.Value -cnotmatch $scalar) { throw "Unsupported value for managed key $($key[0]). Use a single-line string, decimal integer or boolean, not a multiline/inline value." }
+            $edits.Add(@{ Offset = $statement.Start; Length = $statement.End - $statement.Start; Text = '' })
+            continue
+        }
         if (-not $groups.Contains($section) -or -not (@($groups[$section].Values.Keys) -ccontains $key[0])) { continue }
         $group = $groups[$section]
         if ($key.Count -ne 1) { throw "Dotted representation of managed key $($key[0]) is unsupported." }
         if (-not $group.Seen.Add($key[0])) { throw "Duplicate managed TOML key: $($key[0])" }
-        $scalar = '\A(?:"(?:[^"\\\x00-\x1f]|\\(?:["\\btnfr]|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}))*"|''[^''\x00-\x1f]*''|true|false|[+-]?(?:0|[1-9](?:_?[0-9])*))\z'
         if ($statement.Value -cnotmatch $scalar) { throw "Unsupported value for managed key $($key[0]). Use a single-line string, decimal integer or boolean, not a multiline/inline value." }
         $edits.Add(@{ Offset = $statement.ValueStart; Length = $statement.Value.Length; Text = $group.Values[$key[0]] })
     }
@@ -325,10 +340,10 @@ function Get-CodexFileSnapshot {
 }
 
 function New-CodexPlan {
-    param([string] $HomePath, [string] $Endpoint, [string[]] $Models, [string] $CatalogJson)
+    param([string] $HomePath, [string] $Endpoint, [string[]] $Models, [string] $CatalogJson, [switch] $UseCodexDefaults)
     $HomePath = Resolve-CodexHome -HomePath $HomePath
     $Endpoint = Resolve-CodexEndpoint $Endpoint
-    $catalog = New-CodexCatalog -Json $CatalogJson -Models $Models
+    $catalog = New-CodexCatalog -Json $CatalogJson -Models $Models -UseCodexDefaults:$UseCodexDefaults
     $model = if ($Models -ccontains 'gpt-6-astra') { 'gpt-6-astra' } else { $Models[0] }
     $files = @(
         (Get-CodexFileSnapshot (Join-Path $HomePath 'azure-foundry-models.json'))
@@ -340,8 +355,8 @@ function New-CodexPlan {
         try { $text = $utf8.GetString($files[1].Original).TrimStart([char] 0xfeff) }
         catch { throw 'config.toml must be UTF-8. Convert its encoding before rerunning; nothing was written.' }
     }
-    $config = Merge-CodexConfig -Text $text -Endpoint $Endpoint -Model $model -CatalogPath $files[0].Path
-    if ((Merge-CodexConfig -Text $config -Endpoint $Endpoint -Model $model -CatalogPath $files[0].Path) -cne $config) {
+    $config = Merge-CodexConfig -Text $text -Endpoint $Endpoint -Model $model -CatalogPath $files[0].Path -UseCodexDefaults:$UseCodexDefaults
+    if ((Merge-CodexConfig -Text $config -Endpoint $Endpoint -Model $model -CatalogPath $files[0].Path -UseCodexDefaults:$UseCodexDefaults) -cne $config) {
         throw 'The staged TOML merge was not stable. Nothing was written.'
     }
     $files[0].Content = $utf8.GetBytes($catalog)
@@ -349,7 +364,7 @@ function New-CodexPlan {
     foreach ($file in $files) {
         $file.NeedsWrite = -not [Collections.StructuralComparisons]::StructuralEqualityComparer.Equals($file.Original, $file.Content)
     }
-    [pscustomobject]@{ HomePath = $HomePath; Files = $files; Models = @($Models); Model = $model }
+    [pscustomobject]@{ HomePath = $HomePath; Files = $files; Models = @($Models); Model = $model; UseCodexDefaults = [bool] $UseCodexDefaults }
 }
 
 function Save-CodexPlan {
@@ -442,10 +457,10 @@ function Save-CodexPlan {
 }
 
 function Install-AzureCodex {
-    param([string] $Endpoint, [string] $ApiKey, [string[]] $Models, [switch] $Force, [string] $HomePath = $env:CODEX_HOME)
+    param([string] $Endpoint, [string] $ApiKey, [string[]] $Models, [switch] $Force, [switch] $UseCodexDefaults, [string] $HomePath = $env:CODEX_HOME)
     Write-Step 'Preparing Codex configuration and native model catalog'
     $json = Get-CodexOfficialCatalog
-    $plan = New-CodexPlan -HomePath $HomePath -Endpoint $Endpoint -Models $Models -CatalogJson $json
+    $plan = New-CodexPlan -HomePath $HomePath -Endpoint $Endpoint -Models $Models -CatalogJson $json -UseCodexDefaults:$UseCodexDefaults
     Write-Warn 'The resource key will be saved in the Windows USER environment as CODEX_AZURE_API_KEY (not encrypted), and in this PowerShell process. Native auth.json is untouched.'
     if (@($plan.Files | Where-Object { $_.NeedsWrite -and $null -ne $_.Original }).Count -gt 0 -and -not $Force) {
         if ((Read-Host 'Update existing Codex config/catalog (unique backups will be kept)? (y/N)') -notmatch '^[Yy]$') {
@@ -460,7 +475,8 @@ function Install-AzureCodex {
     Write-Step 'Codex setup complete'
     Write-Host "  Available native models: $($plan.Models -join ', ')"
     Write-Host "  Default: $($plan.Model)"
-    Write-Host '  Context: 1,050,000 total; 913,500 usable tokens (87%); compaction at 900,000.'
+    if ($plan.UseCodexDefaults) { Write-Host '  Context: official Codex model and compaction defaults.' }
+    else { Write-Host '  Context: 1,050,000 total; 913,500 usable tokens (87%); compaction at 900,000.' }
     Write-Host '  Credential: Windows user environment + this process, CODEX_AZURE_API_KEY (value not shown).'
     Write-Host '  Fully quit and reopen the desktop app, then start a NEW chat. No app was launched or restarted.'
     Write-Host '  Local Azure-backed work does not require a ChatGPT/OpenAI subscription. WSL has separate config/environment.'
