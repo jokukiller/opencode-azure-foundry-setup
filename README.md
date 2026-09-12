@@ -166,8 +166,45 @@ If your launcher still has a stale environment, sign out of Windows and back in.
 WSL has its own home, config, environment and Codex installation; this native
 Windows setup does not configure WSL.
 
+### Scheduled tasks and cross-task messages on Azure
+
+Some current Codex Desktop/CLI combinations encode app-injected turns (scheduled
+tasks, `send_message_to_thread`, delegated task creation and handoff follow-ups)
+as standalone `function_call_output` items without a `call_id`. OpenAI's internal
+Codex backend supports that extension, but Azure's standard Responses endpoint
+rejects it with:
+
+```text
+Invalid Value: 'input.call_id'. Function call output requires call_id.
+```
+
+Install the local compatibility shim:
+
+```powershell
+.\Install-CodexAzureTaskTransportFix.ps1
+```
+
+Then fully quit all Codex windows and its tray process before reopening it. The
+shim intercepts only local app-server JSON-RPC, converts affected `codex_app`
+turns to Codex's normal text-input fallback, and launches the newest real Codex
+CLI. It does not proxy model traffic, read keys, or log prompt content. It is
+safe to rerun and continues to discover updated bundled CLI executables.
+
+Check or remove it with:
+
+```powershell
+.\Install-CodexAzureTaskTransportFix.ps1 -Action Status
+.\Install-CodexAzureTaskTransportFix.ps1 -Action Uninstall
+```
+
+The installer prevents new malformed turns. A task already poisoned by earlier
+call-id-less records still needs a backed-up history repair or replacement with
+a fresh task. Do not invent a `call_id`: Azure can reject an unmatched value.
+
 Official references: [custom providers and advanced configuration](https://developers.openai.com/codex/config-advanced/)
 and [configuration reference](https://developers.openai.com/codex/config-reference/).
+The [app-server protocol](https://developers.openai.com/codex/app-server/)
+documents normal text turns and standalone tool-output turns.
 
 ## Scope
 
