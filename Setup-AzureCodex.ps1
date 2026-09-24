@@ -1,5 +1,5 @@
 # Loaded only by Setup-AzureOpenCode.ps1 -Codex. No work is performed on import.
-$script:CodexCatalogUrl = 'https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/codex-rs/models-manager/models.json'
+$script:CodexCatalogUrl = 'https://raw.githubusercontent.com/openai/codex/rust-v0.156.1/codex-rs/models-manager/models.json'
 $script:CodexSecurityInstructions = @(
     '# Security engineering'
     ''
@@ -63,7 +63,7 @@ function Assert-CodexInstalled {
         $found = $true
     }
     if (-not $found) { throw 'Install the official Windows Codex/ChatGPT coding app or put the Codex CLI on PATH, then rerun. OpenCode is not required.' }
-    Write-Warn 'Use an up-to-date desktop app AND bundled Codex engine. The catalog snapshot was tested with engine 0.153.4.'
+    Write-Warn 'Use an up-to-date desktop app AND bundled Codex engine. The catalog snapshot is pinned to Codex 0.156.1.'
 }
 
 function Get-CodexOfficialCatalog {

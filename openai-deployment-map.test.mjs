@@ -5,7 +5,7 @@ import { createServer } from "node:http"
 import test from "node:test"
 import openaiDeploymentMap from "./openai-deployment-map.ts"
 
-const models = ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra"]
+const models = ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-6-sol", "gpt-6-luna"]
 
 test("setup probes canonical deployment names without suffixes", async () => {
   const source = await readFile(new URL("./Setup-AzureOpenCode.ps1", import.meta.url), "utf8")
