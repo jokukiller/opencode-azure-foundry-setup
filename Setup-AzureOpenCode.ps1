@@ -86,10 +86,13 @@ $OpenAiModels = [ordered]@{
     "gpt-5.6-sol"   = "gpt-5.6-sol"
     "gpt-5.6-luna"  = "gpt-5.6-luna"
     "gpt-5.6-terra" = "gpt-5.6-terra"
+    "gpt-6-sol"     = "gpt-6-sol"
+    "gpt-6-luna"    = "gpt-6-luna"
 }
 
 # Preferred background model, best first. Titles and summaries use this.
-$SmallModelPreference = @("openai/gpt-5.6-luna", "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "anthropic/claude-opus-4-8")
+# Keep existing choices; prefer Luna when only the new Sol/Luna deployments exist.
+$SmallModelPreference = @("openai/gpt-5.6-luna", "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "anthropic/claude-opus-4-8", "openai/gpt-6-luna", "openai/gpt-6-sol")
 
 function Write-Step { param($m) Write-Host "`n=== $m ===" -ForegroundColor Cyan }
 function Write-Ok   { param($m) Write-Host "  [ok]   $m" -ForegroundColor Green }
@@ -199,7 +202,7 @@ function Test-AnthropicModel {
 
 function Test-OpenAiModel {
     param($Model)
-    # Test the same API that OpenCode's native `openai` provider uses for GPT-5
+    # Test the same API that OpenCode's native `openai` provider uses for GPT
     # models. A successful Chat Completions request alone does not prove that
     # reasoning, cache, and tool workflows through the Responses API will work.
     $body = @{ model = $Model; max_output_tokens = 16; input = "hi" } | ConvertTo-Json -Depth 6

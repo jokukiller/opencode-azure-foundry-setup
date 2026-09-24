@@ -95,7 +95,8 @@ keys are requested and no Anthropic requests are sent.
 
 Setup probes the existing unsuffixed GPT candidate IDs through the Responses
 API. At least one must succeed. Only verified deployments enter the generated
-catalog: `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, as available.
+catalog: `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-luna`,
+`gpt-5.6-terra`, as available. The GPT-6 additions do not replace the GPT-5.6 entries.
 Astra is the default when available; otherwise a successful model is selected.
 The model IDs have no `openai/` prefix.
 
@@ -119,8 +120,9 @@ policy settings, sandbox settings and approval policies are preserved. Do not
 deliberately reintroduce the key through shell policy `set` or project tools.
 
 The catalog is derived from the public official
-[`rust-v0.153.4` catalog snapshot](https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/codex-rs/models-manager/models.json),
-tested with Codex engine **0.153.4**. Every selected model retains its own native
+[`rust-v0.156.1` catalog snapshot](https://raw.githubusercontent.com/openai/codex/rust-v0.156.1/codex-rs/models-manager/models.json),
+which includes native GPT-6 Sol and Luna entries. The online catalog test verifies
+all six supported GPT models in both context modes. Every selected model retains its own native
 prompt prefix, variables, tools, reasoning metadata and other capabilities.
 Only the context fields and the exact `# Security engineering` paragraph block
 in `Setup-AzureCodex.ps1` are added/updated (including legacy instructions when
@@ -301,6 +303,8 @@ The symptom is just sessions that never get titles. The script sets this for you
 OpenCode continues to expose the canonical native models:
 
 - `openai/gpt-6-astra`
+- `openai/gpt-6-sol`
+- `openai/gpt-6-luna`
 - `openai/gpt-5.6-sol`
 - `openai/gpt-5.6-terra`
 - `openai/gpt-5.6-luna`
@@ -311,6 +315,11 @@ Re-run setup to replace a mapper installed by an older version. Legacy suffixed
 model entries are removed, while canonical model overrides are preserved.
 The picker and metadata stay native, including reasoning variants added by
 OpenCode updates.
+
+GPT-6 Sol and Luna are additional deployments; the GPT-5.6 entries and existing
+default preferences remain available. Update OpenCode if its native model catalog
+does not yet list the new models. Rerun setup (with `-Codex` for Codex) to probe
+them and refresh the installed mapper or pinned catalog, then restart the client.
 
 **A second resource cannot reuse a native provider.** A provider entry is one
 `baseURL` plus one key, so a second Anthropic resource has to be its own
@@ -363,8 +372,9 @@ Rough registry pricing per million tokens (input/output):
 | `gpt-5.6-luna` | $1 / $6 |
 
 Context windows are ~1M tokens, so a runaway agent loop gets expensive quickly.
-`gpt-5.6-luna` is the cheap default for background work, which is why the
-script picks it for `small_model`.
+The existing `small_model` preference starts with `gpt-5.6-luna`. If none of the
+previous background choices is deployed, setup prefers `gpt-6-luna` and then
+`gpt-6-sol` before falling back to any other deployed model.
 
 ## Security
 

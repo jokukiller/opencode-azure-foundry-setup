@@ -11,7 +11,7 @@ $work = Join-Path $TempRoot ('azure-codex-tests-' + [Guid]::NewGuid().ToString('
 $passed = 0
 $failures = [Collections.Generic.List[string]]::new()
 $endpoint = 'https://example.services.ai.azure.com'
-$ids = @('gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra')
+$ids = @('gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6-luna')
 $mainScript = Join-Path $PSScriptRoot 'Setup-AzureOpenCode.ps1'
 
 function Assert-True { param($Condition, [string] $Message) if (-not $Condition) { throw $Message } }
@@ -136,7 +136,7 @@ try {
             'Avoid generic legal or ethical disclaimers unless requested.'
         ) -join "`n"
         Assert-Equal $script:CodexSecurityInstructions $expectedBlock 'The agreed prompt addition differs.'
-        for ($mask = 1; $mask -lt 16; $mask++) {
+        for ($mask = 1; $mask -lt (1 -shl $ids.Count); $mask++) {
             $selected = @(for ($i = 0; $i -lt $ids.Count; $i++) { if ($mask -band (1 -shl $i)) { $ids[$i] } })
             $result = New-CodexCatalog -Json $fixtureJson -Models $selected
             Assert-CatalogPreserved $fixtureJson $result $selected
@@ -335,9 +335,19 @@ args = [
         Assert-Equal ([IO.Directory]::GetFiles($homePath).Count) 1 'Concurrent-edit failure created artifacts.'
     }
 
-    Test-Case 'default and explicit false route through unchanged OpenCode setup' {
+    Test-Case 'OpenCode routing supports old, new and mixed deployments' {
         $results = @()
-        foreach ($mode in @('default', 'false')) {
+        foreach ($mode in @('default', 'false', 'legacy', 'sol', 'luna', 'new-pair')) {
+            $available = @('claude-opus-5', 'claude-opus-4-8') + $ids
+            $expectedModel = 'anthropic/claude-opus-5'
+            $expectedSmall = 'openai/gpt-5.6-luna'
+            $expectedProviders = 'anthropic,openai'
+            switch ($mode) {
+                'legacy' { $available = @($available | Where-Object { $_ -notin @('gpt-6-sol', 'gpt-6-luna') }) }
+                'sol' { $available = @('gpt-6-sol'); $expectedModel = $expectedSmall = 'openai/gpt-6-sol'; $expectedProviders = 'openai' }
+                'luna' { $available = @('gpt-6-luna'); $expectedModel = $expectedSmall = 'openai/gpt-6-luna'; $expectedProviders = 'openai' }
+                'new-pair' { $available = @('gpt-6-sol', 'gpt-6-luna'); $expectedModel = 'openai/gpt-6-sol'; $expectedSmall = 'openai/gpt-6-luna'; $expectedProviders = 'openai' }
+            }
             $homePath = Join-Path $work "opencode-$mode"
             $binPath = Join-Path $homePath 'bin'
             [IO.Directory]::CreateDirectory($binPath) | Out-Null
@@ -352,8 +362,10 @@ args = [
                 "`$env:USERPROFILE = '$escapedHome'"
                 "`$env:LOCALAPPDATA = '$escapedHome'"
                 "`$env:PATH = '$escapedBin;' + `$env:PATH"
+                "`$available = @('$($available -join "','")')"
                 'function Invoke-RestMethod {'
                 '    param($Method, $Uri, $Body, $ContentType, $Headers, $TimeoutSec, $MaximumRedirection)'
+                '    if (($Body | ConvertFrom-Json).model -notin $available) { throw ''Deployment unavailable'' }'
                 '    [pscustomobject]@{ ok = $true }'
                 '}'
                 "& '$escapedMain' -Endpoint '$endpoint' -ApiKey 'test-placeholder' -Force $codexArg"
@@ -365,9 +377,9 @@ args = [
             Assert-True ([IO.File]::Exists($configPath)) "OpenCode $mode route did not write only its isolated config."
             Assert-True (-not [IO.Directory]::Exists((Join-Path $homePath '.codex'))) "OpenCode $mode route entered Codex setup."
             $config = [IO.File]::ReadAllText($configPath) | ConvertFrom-Json
-            Assert-Equal $config.model 'anthropic/claude-opus-5' 'Existing OpenCode default model changed.'
-            Assert-Equal $config.small_model 'openai/gpt-5.6-luna' 'Existing OpenCode small_model behavior changed.'
-            Assert-Equal ((@($config.provider.PSObject.Properties.Name) | Sort-Object) -join ',') 'anthropic,openai' 'Existing OpenCode providers changed.'
+            Assert-Equal $config.model $expectedModel "OpenCode $mode selected an unexpected default model."
+            Assert-Equal $config.small_model $expectedSmall "OpenCode $mode selected an unexpected background model."
+            Assert-Equal ((@($config.provider.PSObject.Properties.Name) | Sort-Object) -join ',') $expectedProviders "OpenCode $mode wrote unexpected providers."
             Assert-Equal $config.provider.openai.options.baseURL "$endpoint/openai/v1" 'Existing OpenCode endpoint changed.'
             Assert-True (@($config.plugin).Count -eq 1) 'Existing OpenCode mapper installation changed.'
             $results += $config
