@@ -67,6 +67,74 @@ for securely when omitted.
 
 ## Codex / ChatGPT desktop coding on Windows
 
+### Recover chats after an Azure deployment change
+
+If an existing Codex chat fails with `invalid_encrypted_content` ("encrypted
+content could not be verified"), use [repair_codex_chats.py](repair_codex_chats.py).
+It creates a clean model-context checkpoint from the existing readable history.
+It needs Python 3.10 or newer, uses only the standard library, and makes no
+network or model calls.
+
+Fully quit Codex/ChatGPT and other Codex clients first so their loaded chats can
+be repaired. From this repository in an external PowerShell terminal, run:
+
+```powershell
+# Preview chats created or updated during the last seven days.
+python .\repair_codex_chats.py --days 7
+
+# Back up and repair those chats, then reopen Codex.
+python .\repair_codex_chats.py --days 7 --apply
+```
+
+The date filter uses creation/last-update time, so it includes older chats used
+recently. Archived chats and subagents are excluded by default; add
+`--include-archived` or `--include-subagents` when needed. Use repeatable
+`--thread THREAD_ID` arguments to target exact chats regardless of those filters.
+`--codex-home PATH` overrides `CODEX_HOME` (or the default `~/.codex`).
+
+The script preserves every original JSONL byte and appends a checkpoint with the
+next history ordinal. It removes known encrypted reasoning/message blocks from
+the model context, retaining readable reasoning summaries, messages, tool calls,
+tool results, and per-item metadata. It follows forked history through exact
+byte/ordinal boundaries and leaves shared ancestor segments untouched. Existing
+chat identities, titles, pins, projects, models, goals, and sidebar metadata are
+not edited. Historical error entries and opaque records remain in the original
+log; the newly appended checkpoint supplies the clean context on resume.
+
+This is a recovery tool, not a ciphertext validator. It cannot determine locally
+which encrypted items still work with a provider; `--apply` strips all known
+opaque state in each selected chat's current context. Use it when recovering
+from the encryption error, not as scheduled routine maintenance. Azure key,
+endpoint, rate-limit, and unrelated provider failures need separate fixes.
+
+Backups are stored under `CODEX_HOME/chat-repair-backups` by default. Override
+with `--backup-dir PATH`; keep these private and outside this repository. Each
+repair saves the original log, repaired log, checkpoint, SHA-256 hashes, and a
+manifest. Optional `--report PATH` saves the results locally. To undo one repair:
+
+```powershell
+python .\repair_codex_chats.py --restore "PATH\TO\manifest.json"
+```
+
+Restore refuses to overwrite any chat that changed after repair. Both repair
+and restore acquire Codex's kernel-backed writer/coordination locks. Loaded
+chats, concurrent changes, malformed JSONL, unknown encrypted shapes, and
+unsupported rollback/review-event histories are skipped with an explanation.
+Exit codes: `0` completed, `2` at least one chat skipped, `1` fatal error. A local
+repair does not itself prove provider acceptance; resume the chat with a short
+verification-only reply after reopening Codex. No project work is started by
+the script.
+
+The cost is local file reading, hashing, and backup space, roughly proportional
+to selected history size. Synthetic regression tests cover preservation,
+idempotency, fork boundaries, locks, malformed input, and guarded restoration:
+
+```powershell
+python -m unittest -v test_repair_codex_chats.py
+```
+
+### Configure Codex
+
 Prerequisites: Windows PowerShell 5.1 or newer, an up-to-date official Windows
 Codex app / ChatGPT app with the Codex coding experience, **or** the Codex CLI on
 PATH; an Azure Foundry resource endpoint/key; and at least one supported GPT

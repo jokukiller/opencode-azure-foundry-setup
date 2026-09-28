@@ -12,3 +12,8 @@ opencode.jsonc
 /auth.json
 /azure-foundry-models.json
 /.codex-stage-*
+
+# Local chat-recovery artifacts contain private conversations.
+__pycache__/
+/chat-repair-backups/
+/chat-repair-report*.json
