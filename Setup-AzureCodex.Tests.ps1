@@ -11,7 +11,7 @@ $work = Join-Path $TempRoot ('azure-codex-tests-' + [Guid]::NewGuid().ToString('
 $passed = 0
 $failures = [Collections.Generic.List[string]]::new()
 $endpoint = 'https://example.services.ai.azure.com'
-$ids = @('gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6-luna')
+$ids = @('gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol')
 $mainScript = Join-Path $PSScriptRoot 'Setup-AzureOpenCode.ps1'
 
 function Assert-True { param($Condition, [string] $Message) if (-not $Condition) { throw $Message } }
@@ -267,6 +267,10 @@ args = [
         Assert-True (-not @($defaultAgain.Files | Where-Object { $_.NeedsWrite }).Count) 'Default rerun would rewrite files.'
         $fallback = New-CodexPlan (Join-Path $work 'fallback') $endpoint @($ids[2]) $fixtureJson
         Assert-Equal $fallback.Model $ids[2] 'A verified non-Astra model should be the fallback.'
+        $sol61 = New-CodexPlan (Join-Path $work 'sol-6.1-only') $endpoint @('gpt-6.1-sol') $fixtureJson
+        Assert-Equal $sol61.Model 'gpt-6.1-sol' 'A GPT-6.1 Sol-only resource should select its verified model.'
+        Assert-CatalogPreserved $fixtureJson ([Text.Encoding]::UTF8.GetString($sol61.Files[0].Content)) @('gpt-6.1-sol')
+        Assert-True (([Text.Encoding]::UTF8.GetString($sol61.Files[1].Content)).Contains('model = "gpt-6.1-sol"')) 'GPT-6.1 Sol was not selected in the generated TOML.'
     }
 
     Test-Case 'credential failure restores actual file bytes and both credential scopes' {
@@ -337,14 +341,16 @@ args = [
 
     Test-Case 'OpenCode routing supports old, new and mixed deployments' {
         $results = @()
-        foreach ($mode in @('default', 'false', 'legacy', 'sol', 'luna', 'new-pair')) {
+        foreach ($mode in @('default', 'false', 'legacy', 'previous', 'sol', 'luna', 'new-pair', 'sol-6.1')) {
             $available = @('claude-opus-5', 'claude-opus-4-8') + $ids
             $expectedModel = 'anthropic/claude-opus-5'
             $expectedSmall = 'openai/gpt-5.6-luna'
             $expectedProviders = 'anthropic,openai'
             switch ($mode) {
-                'legacy' { $available = @($available | Where-Object { $_ -notin @('gpt-6-sol', 'gpt-6-luna') }) }
+                'legacy' { $available = @($available | Where-Object { $_ -notin @('gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol') }) }
+                'previous' { $available = @($available | Where-Object { $_ -ne 'gpt-6.1-sol' }) }
                 'sol' { $available = @('gpt-6-sol'); $expectedModel = $expectedSmall = 'openai/gpt-6-sol'; $expectedProviders = 'openai' }
+                'sol-6.1' { $available = @('gpt-6.1-sol'); $expectedModel = $expectedSmall = 'openai/gpt-6.1-sol'; $expectedProviders = 'openai' }
                 'luna' { $available = @('gpt-6-luna'); $expectedModel = $expectedSmall = 'openai/gpt-6-luna'; $expectedProviders = 'openai' }
                 'new-pair' { $available = @('gpt-6-sol', 'gpt-6-luna'); $expectedModel = 'openai/gpt-6-sol'; $expectedSmall = 'openai/gpt-6-luna'; $expectedProviders = 'openai' }
             }
